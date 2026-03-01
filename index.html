@@ -1,134 +1,63 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <title>ADB Call Stress Tester</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
-    <script src="https://cdn.jsdelivr.net/npm/webadb@latest/dist/webadb.js"></script>
+    <title>Root Web ADB Toggle</title>
+    <style>
+        body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; background: #f0f2f5; }
+        button { padding: 15px 30px; font-size: 1.2rem; cursor: pointer; border-radius: 8px; border: none; background: #007bff; color: white; transition: 0.3s; }
+        button:disabled { background: #ccc; }
+        .status { margin-top: 20px; font-weight: bold; }
+    </style>
 </head>
-<body class="bg-light p-4">
-    <div class="container bg-white p-4 shadow rounded" style="max-width: 600px;">
-        <h4 class="text-center mb-4">Network Test Dashboard</h4>
-        
-        <div class="alert alert-info" id="setupNotice">
-            1. Connect phone via USB<br>
-            2. Enable <b>USB Debugging</b> in Developer Options
-        </div>
+<body>
 
-        <button id="connectBtn" class="btn btn-primary w-100 mb-3">Connect Device</button>
-
-        <div class="row g-2 mb-3">
-            <div class="col-12">
-                <input type="text" id="phone" class="form-control" placeholder="Phone Number" value="1234567890">
-            </div>
-            <div class="col-6">
-                <input type="number" id="count" class="form-control" placeholder="Iterations" value="5">
-            </div>
-            <div class="col-6">
-                <input type="number" id="duration" class="form-control" placeholder="Duration (sec)" value="10">
-            </div>
-        </div>
-
-        <button id="runBtn" class="btn btn-success w-100 mb-2" disabled>Start Test Sequence</button>
-        <button id="downloadBtn" class="btn btn-outline-secondary w-100">Download CSV Log</button>
-
-        <div id="log" class="mt-4 p-3 bg-dark text-info font-monospace rounded" style="height: 200px; overflow-y: auto; font-size: 0.85rem;">
-            Ready to connect...
-        </div>
+    <h1>Root APM Control</h1>
+    <button id="connectBtn">Connect Device</button>
+    <div style="margin-top: 20px;">
+        <button id="onBtn" disabled>Turn ON Airplane Mode</button>
+        <button id="offBtn" disabled>Turn OFF Airplane Mode</button>
     </div>
+    <p class="status" id="status">Status: Disconnected</p>
 
-    <script>
+    <script type="module">
+        import { AdbWebUsbBackend, Adb } from 'https://cdn.jsdelivr.net/npm/@yume-chan/adb@latest/dist/index.js';
+
         let adb;
-        let webadb;
-        let csvContent = "Timestamp,Status,RSRP,GPS\n";
+        let device;
 
-        const logView = document.getElementById('log');
-        const addLog = (msg) => {
-            const time = new Date().toLocaleTimeString();
-            logView.innerHTML += `<div><span class="text-secondary">[${time}]</span> ${msg}</div>`;
-            logView.scrollTop = logView.scrollHeight;
-        };
-document.getElementById('connectBtn').onclick = async () => {
-    try {
-        // 1. Request USB device (Vendor ID 0x18d1 is Google/Android)
-        const device = await navigator.usb.requestDevice({
-            filters: []// Empty means show all USB devices
-        });
-        
-        // 2. Open connection
-        await device.open();
-        await device.selectConfiguration(1);
-        await device.claimInterface(0);
+        const connectBtn = document.getElementById('connectBtn');
+        const statusText = document.getElementById('status');
 
-        // NOTE: This establishes the USB link, but you still need
-        // to implement the ADB protocol (handshake, transport)
-        // to send shell commands.
-        
-        addLog("<b>Device Connected via WebUSB!</b>");
-        document.getElementById('runBtn').disabled = false;
-        document.getElementById('setupNotice').style.display = 'none';
-    } catch (e) {
-        addLog("<span class='text-danger'>Connection Failed: " + e.message + "</span>");
-    }
-};
-        
-
-        document.getElementById('runBtn').onclick = async () => {
-            const num = document.getElementById('phone').value;
-            const iterations = parseInt(document.getElementById('count').value);
-            const sec = parseInt(document.getElementById('duration').value);
-
-            addLog("Granting permissions...");
-            await adb.shell("pm grant com.android.shell android.permission.ACCESS_FINE_LOCATION");
-
-            addLog("Toggling Airplane Mode...");
-            await adb.shell("cmd connectivity airplane-mode enable");
-            
-            // Wait for Radio to fully cut
-            setTimeout(async () => {
-                await adb.shell("cmd connectivity airplane-mode disable");
-                addLog("Re-enabling Radio. Waiting 10s for signal...");
+        connectBtn.onclick = async () => {
+            try {
+                const backend = await AdbWebUsbBackend.requestDevice();
+                adb = new Adb(backend);
+                statusText.innerText = "Status: Connected! Check phone for RSA prompt.";
                 
-                await new Promise(r => setTimeout(r, 10000));
-
-                for (let i = 1; i <= iterations; i++) {
-                    addLog(`<b>Call ${i}/${iterations} starting...</b>`);
-                    
-                    // Fetch Signal Info
-                    let signalData = await adb.shell("dumpsys telephony.registry | grep -m 1 'mSignalStrength'");
-                    let rsrpMatch = signalData.match(/rsrp=([- ]?[0-9]+)/);
-                    let rsrp = rsrpMatch ? rsrpMatch[1] : "Unknown";
-
-                    // Fetch Location
-                    let locData = await adb.shell("dumpsys location | grep -m 1 'last location'");
-                    let gpsMatch = locData.match(/([-+]?[0-9]+\.[0-9]+,[-+]?[0-9]+\.[0-9]+)/);
-                    let gps = gpsMatch ? gpsMatch[1] : "No Fix";
-
-                    // Trigger Call
-                    await adb.shell(`am start -a android.intent.action.CALL -d tel:${num}`);
-                    
-                    // Stay on call for user-defined duration
-                    await new Promise(r => setTimeout(r, sec * 1000));
-
-                    // End Call
-                    await adb.shell("input keyevent 6");
-                    
-                    addLog(`Success. RSRP: ${rsrp} | GPS: ${gps}`);
-                    csvContent += `${new Date().toISOString()},SUCCESS,${rsrp},"${gps}"\n`;
-                    
-                    await new Promise(r => setTimeout(r, 2000)); // Gap between calls
-                }
-                addLog("<span class='text-success'>Full Sequence Complete.</span>");
-            }, 3000);
+                // Enable buttons
+                document.getElementById('onBtn').disabled = false;
+                document.getElementById('offBtn').disabled = false;
+            } catch (e) {
+                statusText.innerText = "Error: " + e.message;
+            }
         };
 
-        document.getElementById('downloadBtn').onclick = () => {
-            const blob = new Blob([csvContent], { type: 'text/csv' });
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `network_test_${Date.now()}.csv`;
-            a.click();
+        async function runRootCommand(cmd) {
+            // This sends the command to the shell as a root user
+            const shell = await adb.subprocess.shell(`su -c "${cmd}"`);
+            await shell.onClose;
+        }
+
+        document.getElementById('onBtn').onclick = () => {
+            const cmd = "settings put global airplane_mode_on 1 && am broadcast -a android.intent.action.AIRPLANE_MODE --ez state true";
+            runRootCommand(cmd);
+            statusText.innerText = "Status: Sent ON command";
+        };
+
+        document.getElementById('offBtn').onclick = () => {
+            const cmd = "settings put global airplane_mode_on 0 && am broadcast -a android.intent.action.AIRPLANE_MODE --ez state false";
+            runRootCommand(cmd);
+            statusText.innerText = "Status: Sent OFF command";
         };
     </script>
 </body>
