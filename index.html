@@ -52,7 +52,7 @@ document.getElementById('connectBtn').onclick = async () => {
     try {
         // 1. Request USB device (Vendor ID 0x18d1 is Google/Android)
         const device = await navigator.usb.requestDevice({
-            filters: [{ vendorId: 0x18d1 }]
+            filters: []// Empty means show all USB devices
         });
         
         // 2. Open connection
